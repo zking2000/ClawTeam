@@ -216,12 +216,20 @@ class FileTaskStore(BaseTaskStore):
     def _acquire_lock(self, task: TaskItem, caller: str, force: bool) -> None:
         if task.locked_by and task.locked_by != caller and not force:
             from clawteam.spawn.registry import is_agent_alive
+
             alive = is_agent_alive(self.team_name, task.locked_by)
-            if alive is not False:
+            # Treat None (unknown) as "locked" — safest default to avoid races.
+            if alive is None:
+                raise TaskLockError(
+                    f"Task '{task.id}' is locked by '{task.locked_by}' "
+                    f"(liveness unknown). Use --force to override."
+                )
+            if alive:
                 raise TaskLockError(
                     f"Task '{task.id}' is locked by '{task.locked_by}' "
                     f"(since {task.locked_at}). Use --force to override."
                 )
+            # alive is False — agent is dead, steal the lock.
         task.locked_by = caller or ""
         task.locked_at = _now_iso() if caller else ""
 

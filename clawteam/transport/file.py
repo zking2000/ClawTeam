@@ -171,6 +171,11 @@ class FileTransport(Transport):
 
             if not try_lock(file_handle):
                 file_handle.close()
+                # If this is a .consumed file whose owner died, delete it so it
+                # doesn't haunt the inbox forever.  If it's a .json file just
+                # locked by an active consumer, skip it for now.
+                if path.suffix == ".consumed":
+                    consumed.unlink(missing_ok=True)
                 continue
             try:
                 data = file_handle.read()
