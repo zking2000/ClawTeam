@@ -89,8 +89,44 @@ class WorkspaceManager:
             self.repo_root, wt_path, branch, base_ref=self.base_branch,
         )
 
-        # OpenClaw-specific workspace slimming only makes sense in repositories
-        # that actually carry the expected OpenClaw layout.
+        self._slim_workspace_openclaw(wt_path)
+
+        info = WorkspaceInfo(
+            agent_name=agent_name,
+            agent_id=agent_id,
+            team_name=team_name,
+            branch_name=branch,
+            worktree_path=str(wt_path),
+            repo_root=str(self.repo_root),
+            base_branch=self.base_branch,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+
+        registry = _load_registry(team_name, str(self.repo_root))
+        # Remove stale entry for the same agent, if any
+        registry.workspaces = [
+            w for w in registry.workspaces if w.agent_name != agent_name
+        ]
+        registry.workspaces.append(info)
+        _save_registry(registry)
+
+        return info
+
+    # ------------------------------------------------------------------
+    # OpenClaw workspace slimming (extracted to avoid layering violation)
+    # ------------------------------------------------------------------
+
+    def _slim_workspace_openclaw(self, wt_path: Path) -> None:
+        """Remove non-essential files from an OpenClaw worktree and symlink shared dirs.
+
+        This is an OpenClaw-specific optimisation: it keeps only the files/dirs that
+        the agent actually needs at runtime (openclaw.json, skills/, scripts/, env
+        files, lockfiles, .git, and shared runtime dirs like node_modules/venv/) and
+        symlinks those shared dirs from the repo root into the worktree.
+
+        This method is a best-effort convenience. Failures are logged but do not
+        propagate — a worktree with extra files is still functional.
+        """
         if (self.repo_root / "openclaw.json").exists() and wt_path.exists():
             keep_always = [
                 "openclaw.json",
@@ -129,9 +165,7 @@ class WorkspaceManager:
 
                 if not keep:
                     try:
-                        if item.is_symlink():
-                            item.unlink()
-                        elif item.is_file():
+                        if item.is_symlink() or item.is_file():
                             item.unlink()
                         elif item.is_dir():
                             shutil.rmtree(item)
@@ -153,27 +187,6 @@ class WorkspaceManager:
                     raise RuntimeError(
                         f"workspace slimming left required OpenClaw path missing: {path.name}"
                     )
-
-        info = WorkspaceInfo(
-            agent_name=agent_name,
-            agent_id=agent_id,
-            team_name=team_name,
-            branch_name=branch,
-            worktree_path=str(wt_path),
-            repo_root=str(self.repo_root),
-            base_branch=self.base_branch,
-            created_at=datetime.now(timezone.utc).isoformat(),
-        )
-
-        registry = _load_registry(team_name, str(self.repo_root))
-        # Remove stale entry for the same agent, if any
-        registry.workspaces = [
-            w for w in registry.workspaces if w.agent_name != agent_name
-        ]
-        registry.workspaces.append(info)
-        _save_registry(registry)
-
-        return info
 
     # ------------------------------------------------------------------
     # Checkpoint

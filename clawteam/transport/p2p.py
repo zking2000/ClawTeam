@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import collections
 import json
+import logging
 import os
 import socket
 import threading
 import time
 import uuid
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from clawteam.fileutil import atomic_write_text
 from clawteam.paths import ensure_within_root, validate_identifier
@@ -140,8 +143,8 @@ class P2PTransport(Transport):
         peer_file = _peers_dir(self.team_name) / f"{self._bind_agent}.json"
         try:
             peer_file.unlink(missing_ok=True)
-        except OSError:
-            pass
+        except OSError as exc:
+            logger.debug("failed to unlink peer file %s: %s", peer_file, exc)
 
     def _get_peer_addr(self, recipient: str) -> str | None:
         """Read peers/{recipient}.json and return tcp://host:port if alive."""
@@ -177,7 +180,8 @@ class P2PTransport(Transport):
                 return None
             port = info["port"]
             return f"tcp://{host}:{port}"
-        except Exception:
+        except Exception as exc:
+            logger.warning("failed to read peer file %s: %s", peer_file, exc)
             return None
 
     @staticmethod
@@ -270,28 +274,15 @@ class P2PTransport(Transport):
                 claimed.ack()
             return messages
 
-        messages: list[bytes] = []
-        # 1. Drain ZMQ PULL socket (non-blocking)
-        if self._pull:
-            import zmq
-
-            while len(messages) < limit:
-                try:
-                    data = self._pull.recv(zmq.NOBLOCK)
-                    self._peek_buffer.append(data)
-                    messages.append(data)
-                except zmq.Again:
-                    break
-
-        # 2. File fallback for remaining
-        remaining = limit - len(messages)
-        if remaining > 0:
-            messages.extend(self._file_fallback.fetch(agent_name, remaining, consume))
-        return messages[:limit]
+        # peek (consume=False): never drain ZMQ — it's unreliable/unbuffered and
+        # data-loss risk if process crashes after pulling but before consuming.
+        # Use the file transport as the single source of truth for non-destructive reads.
+        return self._file_fallback.fetch(agent_name, limit, consume=False)
 
     def count(self, agent_name: str) -> int:
-        # ZMQ has no queue-depth query; return file count + peek buffer size
-        return self._file_fallback.count(agent_name) + len(self._peek_buffer)
+        # ZMQ has no queue-depth query; peek buffer is now exclusively used for
+        # in-flight consumed messages in claim_messages, not for non-destructive peek.
+        return self._file_fallback.count(agent_name)
 
     def list_recipients(self) -> list[str]:
         # Union of peers/ directory and inboxes/ directory
