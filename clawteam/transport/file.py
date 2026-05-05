@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import time
 import uuid
@@ -89,7 +90,9 @@ def _is_locked(path: Path) -> bool:
     try:
         handle = path.open("rb")
     except Exception:
-        return True
+        # Can't open the file — treat as not-locked so callers don't skip it entirely.
+        # The subsequent claim will handle any permission / missing-file errors.
+        return False
     try:
         locked = try_lock(handle)
         if locked:
@@ -144,7 +147,6 @@ class FileTransport(Transport):
         target = inbox / filename
         try:
             tmp.write_bytes(data)
-            import os
             os.replace(str(tmp), str(target))
         except Exception:
             tmp.unlink(missing_ok=True)
@@ -158,7 +160,6 @@ class FileTransport(Transport):
             if path.suffix == ".json":
                 consumed = path.with_suffix(".consumed")
                 try:
-                    import os
                     os.replace(str(path), str(consumed))
                 except OSError:
                     continue
@@ -203,7 +204,6 @@ class FileTransport(Transport):
             raw_path = dead_dir / f"{raw_path.stem}-{uuid.uuid4().hex[:8]}{raw_path.suffix}"
 
         if consumed_path is not None and consumed_path.exists():
-            import os
             os.replace(str(consumed_path), str(raw_path))
         else:
             raw_path.write_bytes(data)

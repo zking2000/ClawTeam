@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from clawteam.workspace import git
@@ -62,21 +63,15 @@ def _changed_lines(
         return set()
 
     lines: set[int] = set()
+    # Parse @@ -a,b +c,d @@ hunks with regex for robustness
+    # Handles: @@ -3 +5 @@, @@ -3,5 +5,7 @@, @@ -3 +5,7 @@, etc.
+    hunk_re = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
     for line in diff_raw.splitlines():
-        # Parse @@ -a,b +c,d @@ hunks
-        if line.startswith("@@"):
-            # Extract the +c,d portion (new-file lines)
-            parts = line.split("+")
-            if len(parts) >= 2:
-                hunk = parts[1].split(" ")[0].split("@@")[0]
-                if "," in hunk:
-                    start, count = hunk.split(",", 1)
-                    start = int(start)
-                    count = int(count)
-                else:
-                    start = int(hunk)
-                    count = 1
-                lines.update(range(start, start + count))
+        m = hunk_re.match(line)
+        if m:
+            start = int(m.group(3))  # +start line in new file
+            count = int(m.group(4)) if m.group(4) else 1
+            lines.update(range(start, start + count))
     return lines
 
 
