@@ -169,7 +169,11 @@ def stop_agent(team_name: str, agent_name: str, timeout_seconds: float = 3.0) ->
 
 
 def _tmux_pane_alive(target: str) -> bool:
-    """Check if a tmux target (session:window) still has a running process."""
+    """Check if a tmux target (session:window) still has a running process.
+
+    Uses the tmux pane_dead flag as the authoritative liveness signal.
+    The pane_dead flag is set by tmux when the primary process in the pane exits.
+    """
     if not target:
         return False
     # Check if the window exists at all
@@ -181,14 +185,15 @@ def _tmux_pane_alive(target: str) -> bool:
     if result.returncode != 0:
         # Window doesn't exist anymore
         return False
-    # Check pane_dead flag — "1" means the command has exited
+    # pane_dead=1 means the command has exited — agent is dead
     for line in result.stdout.strip().splitlines():
         parts = line.split(None, 1)
         if parts and parts[0] == "1":
             return False
-        # Also check if the pane is just running a shell (agent exited, shell remains)
-        if len(parts) >= 2 and parts[1] in ("bash", "zsh", "sh", "fish"):
-            return False
+    # NOTE: We no longer treat "bash"/"zsh"/etc. as a proxy for death.
+    # With keepalive=True the agent runs inside a wrapper shell, so the pane
+    # command will be "bash" even when the agent is alive.  Relying on the
+    # shell name caused false-dead detections that triggered spurious respawns.
     return True
 
 

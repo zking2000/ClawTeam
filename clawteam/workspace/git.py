@@ -2,12 +2,27 @@
 
 from __future__ import annotations
 
+import fcntl
 import subprocess
+from contextlib import contextmanager
 from pathlib import Path
 
 
 class GitError(Exception):
     """Raised when a git command fails."""
+
+
+@contextmanager
+def _merge_lock(repo: Path):
+    """Advisory lock serialising concurrent merges into the same repo."""
+    lock_path = repo / ".git" / "clawteam-merge.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("w") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 def _run(args: list[str], cwd: Path | None = None, check: bool = True) -> str:
@@ -89,19 +104,24 @@ def merge_branch(
     target: str,
     no_ff: bool = True,
 ) -> tuple[bool, str]:
-    """Merge *branch* into *target*. Returns (success, output)."""
-    _run(["checkout", target], cwd=repo)
-    args = ["merge"]
-    if no_ff:
-        args.append("--no-ff")
-    args.append(branch)
-    try:
-        out = _run(args, cwd=repo)
-        return True, out
-    except GitError as e:
-        # Abort on conflict
-        subprocess.run(["git", "merge", "--abort"], cwd=repo, capture_output=True)
-        return False, str(e)
+    """Merge *branch* into *target*. Returns (success, output).
+
+    Concurrent merges into the same repo are serialised via an advisory lock
+    to prevent checkout/merge race conditions.
+    """
+    with _merge_lock(repo):
+        _run(["checkout", target], cwd=repo)
+        args = ["merge"]
+        if no_ff:
+            args.append("--no-ff")
+        args.append(branch)
+        try:
+            out = _run(args, cwd=repo)
+            return True, out
+        except GitError as e:
+            # Abort on conflict
+            subprocess.run(["git", "merge", "--abort"], cwd=repo, capture_output=True)
+            return False, str(e)
 
 
 def list_worktrees(repo: Path) -> list[dict[str, str]]:

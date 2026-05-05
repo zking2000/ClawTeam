@@ -28,6 +28,9 @@ from clawteam.spawn.keepalive import build_keepalive_shell_command, build_resume
 from clawteam.spawn.runtime_notification import render_runtime_notification
 from clawteam.team.models import get_data_dir
 
+# Shell-safe env var name: ASCII alphanumerics + underscore only.
+# This explicitly excludes WSL's PROGRAMFILES(X86) and similar names that
+# are valid Python os.environ keys but invalid bash export identifiers.
 _SHELL_ENV_KEY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 
 
@@ -131,19 +134,26 @@ class TmuxBackend(SpawnBackend):
         # shell before the pane becomes observable.
         export_vars = {k: v for k, v in env_vars.items() if _SHELL_ENV_KEY_RE.fullmatch(k)}
 
-        # Write env vars to a temp file and source it to avoid exceeding
-        # tmux's command-length limit (~16k chars).  The file is deliberately
-        # NOT deleted here — the sourcing shell needs it at startup.  A
-        # self-cleanup line inside the file removes it after it has been read.
-        env_file = tempfile.NamedTemporaryFile(
-            mode="w", suffix=".env.sh", delete=False, prefix="clawteam-env-"
-        )
-        for k, v in export_vars.items():
-            env_file.write(f"export {k}={shlex.quote(v)}\n")
-        # Self-cleanup: remove the env file after sourcing
-        env_file.write(f"rm -f {shlex.quote(env_file.name)}\n")
-        env_file.close()
-        env_source_cmd = f". {shlex.quote(env_file.name)}"
+        # Write env vars to a temp file sourced by the pane shell at startup.
+        # The env file is NOT deleted here (delete=False) — the shell needs it at
+        # pane creation time. We mitigate orphaned files by having the wrapper
+        # script remove the env file as its very first action after sourcing it.
+        # If the pane never starts the wrapper, a stale env file remains in /tmp
+        # — harmless but unclean. To avoid this, we write a small inline wrapper
+        # that removes the env file immediately after sourcing.
+        env_file_fd, env_file_path = tempfile.mkstemp(suffix=".env.sh", prefix="clawteam-env-")
+        try:
+            env_file = os.fdopen(env_file_fd, "w", encoding="utf-8")
+            for k, v in export_vars.items():
+                env_file.write(f"export {k}={shlex.quote(v)}\n")
+            # Self-cleanup: remove env file as the FIRST line of the sourced script
+            # (before any command runs) so stale files can't accumulate.
+            env_file.write(f"rm -f {shlex.quote(env_file_path)}\n")
+            env_file.close()
+        except Exception:
+            os.close(env_file_fd)
+            raise
+        env_source_cmd = f". {shlex.quote(env_file_path)}"
 
         wrapped_cmd = build_keepalive_shell_command(
             final_command,

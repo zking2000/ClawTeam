@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable
+
+logger = logging.getLogger(__name__)
 
 from clawteam.events.types import HarnessEvent
 
@@ -96,8 +99,13 @@ class EventBus:
             try:
                 result = sub.handler(event)
                 results.append(result)
-            except Exception:
-                pass  # handlers must not crash the bus
+            except Exception as exc:
+                logger.warning(
+                    "event handler %s raised for %s: %s",
+                    sub.handler.__name__ if hasattr(sub.handler, "__name__") else repr(sub.handler),
+                    type(event).__name__,
+                    exc,
+                )
         return results
 
     def emit_async(self, event: HarnessEvent) -> None:

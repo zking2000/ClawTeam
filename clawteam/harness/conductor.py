@@ -168,7 +168,18 @@ class HarnessConductor:
 
             executor = ContractExecutor(self._orch)
             tasks = executor.create_tasks_from_contracts(agent_names=available_executors)
-            if tasks:
+            if not tasks:
+                print(
+                    f"[conductor] Warning: no tasks created from contracts "
+                    f"(available_executors={available_executors}). "
+                    f"Harness cannot proceed.",
+                    file=sys.stderr,
+                )
+            else:
                 print(f"[conductor] Created {len(tasks)} task(s) from contracts", file=sys.stderr)
         except Exception as e:
-            print(f"[conductor] Warning: failed to create tasks: {e}", file=sys.stderr)
+            print(
+                f"[conductor] Error: failed to create tasks, cannot proceed: {e}",
+                file=sys.stderr,
+            )
+            self._running = False

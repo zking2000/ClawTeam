@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Any
 
 from clawteam.harness.phases import PhaseState
 from clawteam.harness.roles import DEFAULT_ROLES, EVALUATOR, EXECUTOR, PLANNER
 from clawteam.harness.strategies import SpawnStrategy
+
+logger = logging.getLogger(__name__)
 
 
 class PhaseRoleSpawner(SpawnStrategy):
@@ -40,8 +43,8 @@ class PhaseRoleSpawner(SpawnStrategy):
             get_event_bus().emit(event)
             if event.veto:
                 return []
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("BeforeWorkerSpawn event handler failed (veto skipped): %s", exc)
 
         spawned: list[str] = []
         for i in range(count):
@@ -93,8 +96,11 @@ class PhaseRoleSpawner(SpawnStrategy):
                 )
                 if not result.startswith("Error"):
                     spawned.append(agent_name)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning(
+                    "failed to spawn agent %s (role=%s, phase=%s): %s",
+                    agent_name, role_name, phase, exc,
+                )
 
         return spawned
 
